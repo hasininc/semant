@@ -1,0 +1,6 @@
+datasets
+scikit-learn
+joblib
+
+fastapi
+uvicorn[standard]

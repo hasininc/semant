@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 type Page = "playground" | "analytics" | "comparison" | "reports";
 type IconName =
@@ -169,6 +169,17 @@ const samples = {
   "Ambiguous Text": "It works differently than I expected, though that is not necessarily a bad thing.",
 };
 
+type ApiPrediction = {
+  text: string;
+  sentiment: "Positive" | "Negative";
+  confidence: number;
+  probabilities: {
+    negative: number;
+    positive: number;
+  };
+  model: string;
+};
+
 function Playground({ goToAnalytics }: { goToAnalytics: () => void }) {
   const [text, setText] = useState("");
   const [model, setModel] = useState("Logistic Regression");
@@ -179,11 +190,8 @@ function Playground({ goToAnalytics }: { goToAnalytics: () => void }) {
   );
   const [tested, setTested] = useState(false);
 
-  const result = useMemo(() => {
-    const negativeWords = ["slow", "bad", "regret", "confusing", "disappointing", "poor"];
-    const isNegative = negativeWords.some((word) => text.toLowerCase().includes(word));
-    return { sentiment: isNegative ? "Negative" : "Positive", confidence: isNegative ? 91 : 94 };
-  }, [text]);
+  const [result, setResult] = useState<ApiPrediction | null>(null);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const modifiedText =
     perturbation === "Spelling Changes"
@@ -192,15 +200,45 @@ function Playground({ goToAnalytics }: { goToAnalytics: () => void }) {
           .replace(/exceeded my expectations/gi, "was better than I anticipated")
           .replace(/wonderfully helpful/gi, "extremely supportive");
 
-  function analyze() {
-    if (!text.trim()) {
-      setState("error");
-      return;
-    }
-    setState("loading");
-    setShowRobustness(false);
-    window.setTimeout(() => setState("result"), 650);
+  async function analyze() {
+  if (!text.trim()) {
+    setErrorMessage("Add some text before running the analysis.");
+    setState("error");
+    return;
   }
+
+  setState("loading");
+  setErrorMessage("");
+  setShowRobustness(false);
+
+  try {
+    const response = await fetch("http://127.0.0.1:8000/predict", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text: text.trim() }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.status}`);
+    }
+
+    const prediction: ApiPrediction = await response.json();
+
+    setResult(prediction);
+    setState("result");
+  } catch (error) {
+    console.error("Prediction error:", error);
+
+    setErrorMessage(
+      error instanceof Error
+        ? error.message
+        : "Could not connect to the prediction API.",
+    );
+    setState("error");
+  }
+}
 
   return (
     <main className="page playground-page">
@@ -224,22 +262,33 @@ function Playground({ goToAnalytics }: { goToAnalytics: () => void }) {
             maxLength={500}
             onChange={(event) => {
               setText(event.target.value);
-              if (state === "error") setState("idle");
+              if (state === "error") {
+                setState("idle");
+                setErrorMessage("");
+              }
             }}
             placeholder="Type a review or sentence to analyze..."
             value={text}
           />
           <span className="char-count">{text.length} / 500</span>
         </div>
+        
+        
         {state === "error" && (
           <div className="error-message" role="alert">
             <Icon name="alert" size={15} />
-            Add some text before running the analysis.
+            {errorMessage}
           </div>
-        )}
+)}
         <div className="samples">
           {Object.entries(samples).map(([label, sample]) => (
-            <button className="sample-chip" key={label} onClick={() => setText(sample)} type="button">
+            <button className="sample-chip" key={label} 
+onClick={() => {
+  setText(sample);
+  setState("idle");
+  setErrorMessage("");
+  setResult(null);
+}} type="button">
               <span className={`chip-dot ${label.split(" ")[0].toLowerCase()}`} />
               {label}
             </button>
@@ -271,7 +320,7 @@ function Playground({ goToAnalytics }: { goToAnalytics: () => void }) {
         </div>
       )}
 
-      {state === "result" && (
+      {state === "result" && result && (
         <section className="glass result-card">
           <div className="result-heading">
             <div>
@@ -313,7 +362,7 @@ function Playground({ goToAnalytics }: { goToAnalytics: () => void }) {
         </section>
       )}
 
-      {state === "result" && showRobustness && (
+      {state === "result" && result && showRobustness && (
         <section className="robustness-section">
           <div className="section-header">
             <div>
