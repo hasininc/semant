@@ -1,0 +1,10 @@
+{
+  "description": "Evaluate and compare text classification models' robustness to spelling and paraphrasing with intuitive analysis and detailed reports for AI developers.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
