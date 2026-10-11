@@ -45,6 +45,9 @@ y_train = list(train_data["label"])
 X_test = list(test_data["text"])
 y_test = list(test_data["label"])
 
+print("Training labels:", set(y_train))
+print("Label counts:", {label: y_train.count(label) for label in set(y_train)})
+
 print(f"Training reviews: {len(X_train)}")
 print(f"Testing reviews: {len(X_test)}")
 

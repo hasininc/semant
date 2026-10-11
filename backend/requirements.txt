@@ -4,3 +4,6 @@ joblib
 
 fastapi
 uvicorn[standard]
+torch
+transformers
+accelerate

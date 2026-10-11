@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 
 type Page = "playground" | "analytics" | "comparison" | "reports";
+
 type IconName =
   | "shield"
   | "sparkles"
@@ -12,7 +13,8 @@ type IconName =
   | "check"
   | "alert"
   | "play"
-  | "chevron";
+  | "chevron"
+  | "refresh";
 
 const navItems: { id: Page; label: string; icon: IconName }[] = [
   { id: "playground", label: "Playground", icon: "play" },
@@ -76,7 +78,16 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
     ),
     play: <path d="m8 5 11 7-11 7V5Z" />,
     chevron: <path d="m8 10 4 4 4-4" />,
+    refresh: (
+      <>
+        <path d="M3 12a9 9 0 0 1 15.55-6.36L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-15.55 6.36L3 16" />
+        <path d="M3 21v-5h5" />
+      </>
+    ),
   };
+
   return (
     <svg
       aria-hidden="true"
@@ -85,6 +96,10 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
       height={size}
       viewBox="0 0 24 24"
       width={size}
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
     >
       {paths[name]}
     </svg>
@@ -97,15 +112,23 @@ function Button({
   onClick,
   variant = "primary",
   type = "button",
+  disabled = false,
 }: {
   children: ReactNode;
   icon?: IconName;
   onClick?: () => void;
   variant?: "primary" | "secondary" | "quiet";
   type?: "button" | "submit";
+  disabled?: boolean;
 }) {
   return (
-    <button className={`button button-${variant}`} onClick={onClick} type={type}>
+    <button
+      className={`button button-${variant}`}
+      disabled={disabled}
+      onClick={onClick}
+      style={disabled ? { opacity: 0.6, cursor: "not-allowed" } : undefined}
+      type={type}
+    >
       {icon && <Icon name={icon} size={17} />}
       <span>{children}</span>
     </button>
@@ -130,10 +153,96 @@ function PageHeader({
   );
 }
 
-function AppNav({ page, setPage }: { page: Page; setPage: (page: Page) => void }) {
+const API_BASE_URL = "http://127.0.0.1:8000";
+
+async function fetchFromApi<T>(
+  path: string,
+  options?: RequestInit,
+): Promise<T> {
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, options);
+  } catch {
+    response = await fetch(`/api${path}`, options);
+  }
+
+  if (!response.ok) {
+    let detail = `Request failed with status ${response.status}`;
+
+    try {
+      const err = await response.json();
+      if (err?.detail) detail = err.detail;
+    } catch {
+      // The response may not contain JSON.
+    }
+
+    throw new Error(detail);
+  }
+
+  return response.json();
+}
+
+type ApiPrediction = {
+  text: string;
+  sentiment: "Positive" | "Negative";
+  confidence: number;
+  probabilities: {
+    negative: number;
+    positive: number;
+  };
+  model: string;
+};
+
+type BackendMetrics = {
+  model: string;
+  dataset: string;
+  training_samples: number;
+  testing_samples: number;
+  accuracy: number;
+  precision: number;
+  recall: number;
+  f1_score: number;
+  confusion_matrix?: number[][];
+};
+
+type PerturbationMetrics = {
+  accuracy: number;
+  accuracy_drop?: number;
+  flip_rate?: number;
+  prediction_flip_rate?: number;
+};
+
+type RobustnessModelResult = {
+  model: string;
+  original_accuracy: number;
+  perturbations: Record<string, PerturbationMetrics>;
+};
+
+type RobustnessResponse = {
+  results: RobustnessModelResult[];
+};
+
+type ApiStatus = "checking" | "online" | "offline";
+
+function AppNav({
+  page,
+  setPage,
+  apiStatus,
+  onRefreshStatus,
+}: {
+  page: Page;
+  setPage: (page: Page) => void;
+  apiStatus: ApiStatus;
+  onRefreshStatus: () => void;
+}) {
   return (
     <nav className="glass nav-shell" aria-label="Primary navigation">
-      <button className="brand" onClick={() => setPage("playground")} type="button">
+      <button
+        className="brand"
+        onClick={() => setPage("playground")}
+        type="button"
+      >
         <span className="brand-icon">
           <Icon name="shield" size={22} />
         </span>
@@ -142,6 +251,7 @@ function AppNav({ page, setPage }: { page: Page; setPage: (page: Page) => void }
           <small>Test. Compare. Trust.</small>
         </span>
       </button>
+
       <div className="nav-links">
         {navItems.map((item) => (
           <button
@@ -155,96 +265,287 @@ function AppNav({ page, setPage }: { page: Page; setPage: (page: Page) => void }
           </button>
         ))}
       </div>
-      <div className="status">
-        <span className="status-dot" />
-        Models Ready
+
+      <div
+        className={`status ${apiStatus}`}
+        onClick={onRefreshStatus}
+        role="button"
+        tabIndex={0}
+        title={
+          apiStatus === "online"
+            ? "API connected at http://127.0.0.1:8000 (click to test connection)"
+            : "Cannot reach http://127.0.0.1:8000 (click to retry)"
+        }
+      >
+        <span className={`status-dot ${apiStatus}`} />
+        {apiStatus === "online" && "API Online · Port 8000"}
+        {apiStatus === "offline" && "Backend Offline (Port 8000)"}
+        {apiStatus === "checking" && "Connecting..."}
       </div>
     </nav>
   );
 }
 
 const samples = {
-  "Positive Review": "The product exceeded my expectations and the support team was wonderfully helpful.",
-  "Negative Review": "The app feels slow, confusing, and I regret paying for the subscription.",
-  "Ambiguous Text": "It works differently than I expected, though that is not necessarily a bad thing.",
+  "Positive Review":
+    "The product exceeded my expectations and the support team was wonderfully helpful.",
+  "Negative Review":
+    "The app feels slow, confusing, and I regret paying for the subscription.",
+  "Ambiguous Text":
+    "It works differently than I expected, though that is not necessarily a bad thing.",
 };
 
-type ApiPrediction = {
-  text: string;
-  sentiment: "Positive" | "Negative";
-  confidence: number;
-  probabilities: {
-    negative: number;
-    positive: number;
-  };
-  model: string;
-};
+type PerturbationType =
+  | "Spelling Changes"
+  | "Paraphrase"
+  | "Negation / Contrast"
+  | "Custom Edit";
 
-function Playground({ goToAnalytics }: { goToAnalytics: () => void }) {
-  const [text, setText] = useState("");
-  const [model, setModel] = useState("Logistic Regression");
-  const [state, setState] = useState<"idle" | "loading" | "result" | "error">("idle");
-  const [showRobustness, setShowRobustness] = useState(false);
-  const [perturbation, setPerturbation] = useState<"Spelling Changes" | "Paraphrase">(
-    "Spelling Changes",
-  );
-  const [tested, setTested] = useState(false);
+function generatePerturbation(
+  input: string,
+  type: PerturbationType,
+): string {
+  if (!input.trim()) return input;
 
-  const [result, setResult] = useState<ApiPrediction | null>(null);
-  const [errorMessage, setErrorMessage] = useState("");
+  if (type === "Spelling Changes") {
+    const typoDict: Record<string, string> = {
+      the: "teh",
+      this: "ths",
+      that: "taht",
+      with: "wiht",
+      great: "graet",
+      good: "gud",
+      awesome: "awsome",
+      terrible: "terrible",
+      horrible: "horible",
+      recommend: "recommed",
+      wonderfully: "wonderfuly",
+      helpful: "helpfull",
+      product: "prduct",
+      service: "servise",
+      because: "becuase",
+      really: "realy",
+      definitely: "definitly",
+      excellent: "excelent",
+      worst: "wrst",
+      best: "bst",
+      love: "luv",
+      loved: "lovd",
+      hate: "h8",
+      slow: "sloow",
+      confusing: "confusin",
+      subscription: "subcription",
+      different: "diffrent",
+    };
 
-  const modifiedText =
-    perturbation === "Spelling Changes"
-      ? text.replace(/the/gi, "teh").replace(/wonderfully/gi, "wonderfuly")
-      : text
-          .replace(/exceeded my expectations/gi, "was better than I anticipated")
-          .replace(/wonderfully helpful/gi, "extremely supportive");
+    const words = input.split(/(\s+|[.,!?;:])/);
+    let altered = false;
 
-  async function analyze() {
-  if (!text.trim()) {
-    setErrorMessage("Add some text before running the analysis.");
-    setState("error");
-    return;
-  }
+    const newWords = words.map((word) => {
+      const lower = word.toLowerCase();
 
-  setState("loading");
-  setErrorMessage("");
-  setShowRobustness(false);
+      if (typoDict[lower]) {
+        altered = true;
+        const replacement = typoDict[lower];
 
-  try {
-    const response = await fetch("http://127.0.0.1:8000/predict", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ text: text.trim() }),
+        return word[0] === word[0].toUpperCase() && word.length > 1
+          ? replacement[0].toUpperCase() + replacement.slice(1)
+          : replacement;
+      }
+
+      return word;
     });
 
-    if (!response.ok) {
-      throw new Error(`API request failed: ${response.status}`);
+    if (altered) {
+      return newWords.join("");
     }
 
-    const prediction: ApiPrediction = await response.json();
+    return input
+      .split(" ")
+      .map((word, index) => {
+        if (index % 2 === 0 && word.length > 4) {
+          return (
+            word.slice(0, 2) +
+            word[3] +
+            word[2] +
+            word.slice(4)
+          );
+        }
 
-    setResult(prediction);
-    setState("result");
-  } catch (error) {
-    console.error("Prediction error:", error);
-
-    setErrorMessage(
-      error instanceof Error
-        ? error.message
-        : "Could not connect to the prediction API.",
-    );
-    setState("error");
+        return word;
+      })
+      .join(" ");
   }
+
+  if (type === "Paraphrase") {
+    const map: Record<string, string> = {
+      "exceeded my expectations": "was better than I anticipated",
+      "wonderfully helpful": "extremely supportive",
+      "feels slow": "lacks prompt responsiveness",
+      confusing: "unintuitive",
+      "regret paying": "wish I had not purchased",
+      subscription: "membership plan",
+      "works differently": "functions in an unexpected manner",
+      "not necessarily a bad thing": "not automatically a negative",
+      great: "solid",
+      terrible: "decidedly underwhelming",
+      amazing: "quite impressive",
+      loved: "strongly appreciated",
+      hated: "was disappointed by",
+      excellent: "remarkably good",
+      "support team": "customer assistance staff",
+    };
+
+    let result = input;
+    let found = false;
+
+    for (const [key, replacement] of Object.entries(map)) {
+      const regex = new RegExp(`\\b${key}\\b`, "gi");
+
+      if (regex.test(result)) {
+        result = result.replace(regex, replacement);
+        found = true;
+      }
+    }
+
+    if (!found) {
+      if (result.toLowerCase().startsWith("the ")) {
+        result = `In practice, ${result.charAt(0).toLowerCase() + result.slice(1)}`;
+      } else {
+        result = `From my perspective, ${result.charAt(0).toLowerCase() + result.slice(1)}`;
+      }
+    }
+
+    return result;
+  }
+
+  if (type === "Negation / Contrast") {
+    if (input.toLowerCase().includes("not ")) {
+      return input.replace(/\bnot\s+([a-zA-Z]+)/gi, "hardly $1");
+    }
+
+    return `${input.replace(/[.]+$/, "")}, or so it initially seemed.`;
+  }
+
+  return input;
 }
+
+function Playground({
+  goToAnalytics,
+  onModelTested,
+}: {
+  goToAnalytics: () => void;
+  onModelTested?: () => void;
+}) {
+  const [text, setText] = useState("");
+  const [model, setModel] = useState("Logistic Regression (TF-IDF)");
+  const [state, setState] = useState<
+    "idle" | "loading" | "result" | "error"
+  >("idle");
+  const [showRobustness, setShowRobustness] = useState(false);
+  const [perturbation, setPerturbation] =
+    useState<PerturbationType>("Spelling Changes");
+  const [modifiedText, setModifiedText] = useState("");
+  const [isEditingVariant, setIsEditingVariant] = useState(false);
+
+  const [result, setResult] = useState<ApiPrediction | null>(null);
+  const [variantResult, setVariantResult] = useState<ApiPrediction | null>(null);
+  const [testingVariant, setTestingVariant] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    if (!isEditingVariant && text.trim()) {
+      setModifiedText(generatePerturbation(text, perturbation));
+      setVariantResult(null);
+    }
+  }, [text, perturbation, isEditingVariant]);
+
+  async function analyze() {
+    const trimmed = text.trim();
+
+    if (!trimmed) {
+      setErrorMessage(
+        "Please enter some text before running the sentiment analysis.",
+      );
+      setState("error");
+      return;
+    }
+
+    setState("loading");
+    setErrorMessage("");
+    setShowRobustness(false);
+    setVariantResult(null);
+
+    try {
+      const prediction = await fetchFromApi<ApiPrediction>("/predict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: trimmed }),
+      });
+
+      setResult(prediction);
+      setModifiedText(generatePerturbation(trimmed, perturbation));
+      setState("result");
+      onModelTested?.();
+    } catch (error) {
+      console.error("Prediction error:", error);
+
+      setErrorMessage(
+        error instanceof Error
+          ? `${error.message}. Ensure the FastAPI server is running at http://127.0.0.1:8000.`
+          : "Could not connect to the prediction API at http://127.0.0.1:8000.",
+      );
+
+      setState("error");
+    }
+  }
+
+  async function runRobustnessTest() {
+    const trimmedVariant = modifiedText.trim();
+
+    if (!trimmedVariant) return;
+
+    setTestingVariant(true);
+
+    try {
+      const prediction = await fetchFromApi<ApiPrediction>("/predict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: trimmedVariant }),
+      });
+
+      setVariantResult(prediction);
+    } catch (error) {
+      console.error("Variant prediction error:", error);
+
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not evaluate the modified variant.",
+      );
+    } finally {
+      setTestingVariant(false);
+    }
+  }
+
+  const isConsistent =
+    result && variantResult && result.sentiment === variantResult.sentiment;
+
+  const confidenceDiff =
+    result && variantResult
+      ? result.confidence - variantResult.confidence
+      : 0;
+
+  const isDegraded = isConsistent && confidenceDiff > 10;
+
+  const isFlipped =
+    result && variantResult && result.sentiment !== variantResult.sentiment;
 
   return (
     <main className="page playground-page">
       <PageHeader
         eyebrow="TEXT ROBUSTNESS LAB"
-        subtitle="Test text classifiers against spelling changes and paraphrases to discover when predictions fail."
+        subtitle="Evaluate text classifiers against real-world spelling changes, typos, and paraphrases to discover when predictions fail."
         title="Understand how robust your AI really is."
       />
 
@@ -256,57 +557,78 @@ function Playground({ goToAnalytics }: { goToAnalytics: () => void }) {
           </div>
           <span className="sample-badge">Try a sample</span>
         </div>
+
         <div className={`textarea-wrap ${state === "error" ? "has-error" : ""}`}>
           <textarea
             aria-label="Text to analyze"
-            maxLength={500}
+            maxLength={1000}
             onChange={(event) => {
               setText(event.target.value);
+
               if (state === "error") {
                 setState("idle");
                 setErrorMessage("");
               }
             }}
-            placeholder="Type a review or sentence to analyze..."
+            placeholder="Type a review, customer comment, or sentence to analyze..."
             value={text}
           />
-          <span className="char-count">{text.length} / 500</span>
+
+          <span className="char-count">{text.length} / 1000</span>
         </div>
-        
-        
+
         {state === "error" && (
           <div className="error-message" role="alert">
             <Icon name="alert" size={15} />
-            {errorMessage}
+            <span>{errorMessage}</span>
           </div>
-)}
+        )}
+
         <div className="samples">
           {Object.entries(samples).map(([label, sample]) => (
-            <button className="sample-chip" key={label} 
-onClick={() => {
-  setText(sample);
-  setState("idle");
-  setErrorMessage("");
-  setResult(null);
-}} type="button">
+            <button
+              className="sample-chip"
+              key={label}
+              onClick={() => {
+                setText(sample);
+                setState("idle");
+                setErrorMessage("");
+                setResult(null);
+                setVariantResult(null);
+                setShowRobustness(false);
+                setIsEditingVariant(false);
+              }}
+              type="button"
+            >
               <span className={`chip-dot ${label.split(" ")[0].toLowerCase()}`} />
               {label}
             </button>
           ))}
         </div>
+
         <div className="input-actions">
           <label className="select-field">
             <span>Classification model</span>
+
             <span className="select-wrap">
-              <select value={model} onChange={(event) => setModel(event.target.value)}>
-                <option>Logistic Regression</option>
-                <option>Transformer Model</option>
+              <select
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+              >
+                <option value="Logistic Regression (TF-IDF)">
+                  TF-IDF + Logistic Regression (Live Model)
+                </option>
               </select>
               <Icon name="chevron" size={16} />
             </span>
           </label>
-          <Button icon={state === "loading" ? undefined : "play"} onClick={analyze}>
-            {state === "loading" ? "Analyzing…" : "Analyze Text"}
+
+          <Button
+            disabled={state === "loading"}
+            icon={state === "loading" ? undefined : "play"}
+            onClick={analyze}
+          >
+            {state === "loading" ? "Analyzing with Model…" : "Analyze Text"}
           </Button>
         </div>
       </section>
@@ -316,7 +638,10 @@ onClick={() => {
           <span className="empty-icon">
             <Icon name="chart" size={20} />
           </span>
-          <p>Your prediction and confidence insights will appear here.</p>
+          <p>
+            Your model prediction, confidence scores, and probability
+            distribution will appear here.
+          </p>
         </div>
       )}
 
@@ -324,39 +649,89 @@ onClick={() => {
         <section className="glass result-card">
           <div className="result-heading">
             <div>
-              <span className="section-kicker">PREDICTION RESULT · {model}</span>
+              <span className="section-kicker">
+                PREDICTION RESULT ·{" "}
+                {result.model || "TF-IDF + Logistic Regression"}
+              </span>
+
               <h2>
-                <span className={`sentiment-dot ${result.sentiment.toLowerCase()}`} />
+                <span
+                  className={`sentiment-dot ${result.sentiment.toLowerCase()}`}
+                />
                 {result.sentiment} sentiment
               </h2>
             </div>
+
             <div className="confidence-orb">
               <strong>{result.confidence}%</strong>
               <span>confidence</span>
             </div>
           </div>
+
           <div className="confidence-track">
             <span style={{ width: `${result.confidence}%` }} />
           </div>
+
+          {result.probabilities && (
+            <div className="probability-breakdown">
+              <div className="prob-item">
+                <span className="prob-label">Positive</span>
+
+                <div className="prob-bar-track">
+                  <div
+                    className="prob-bar-fill positive"
+                    style={{ width: `${result.probabilities.positive}%` }}
+                  />
+                </div>
+
+                <span className="prob-value">
+                  {result.probabilities.positive}%
+                </span>
+              </div>
+
+              <div className="prob-item">
+                <span className="prob-label">Negative</span>
+
+                <div className="prob-bar-track">
+                  <div
+                    className="prob-bar-fill negative"
+                    style={{ width: `${result.probabilities.negative}%` }}
+                  />
+                </div>
+
+                <span className="prob-value">
+                  {result.probabilities.negative}%
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="explanation">
             <Icon name="shield" size={17} />
             <p>
-              The model identified strong {result.sentiment.toLowerCase()} language and a consistent
-              semantic tone across the sentence.
+              {result.sentiment === "Positive"
+                ? `The trained classifier identified predominantly positive lexical markers and optimistic phrasing with ${result.confidence}% confidence.`
+                : `The trained classifier identified critical or negative phrasing and sentiment markers with ${result.confidence}% confidence.`}
             </p>
           </div>
+
           <div className="result-actions">
             <Button
               icon="shield"
               onClick={() => {
                 setShowRobustness(true);
-                setTested(false);
+                setVariantResult(null);
               }}
             >
               Test Robustness
             </Button>
-            <Button icon="chart" onClick={goToAnalytics} variant="secondary">
-              View Analytics
+
+            <Button
+              icon="chart"
+              onClick={goToAnalytics}
+              variant="secondary"
+            >
+              View Model Analytics
             </Button>
           </div>
         </section>
@@ -366,17 +741,34 @@ onClick={() => {
         <section className="robustness-section">
           <div className="section-header">
             <div>
-              <span className="section-kicker">ROBUSTNESS TEST</span>
-              <h2>See how small changes affect your model</h2>
+              <span className="section-kicker">
+                ADVERSARIAL & ROBUSTNESS TEST
+              </span>
+              <h2>See how modifications affect your model</h2>
             </div>
+
             <div className="segment-control">
-              {(["Spelling Changes", "Paraphrase"] as const).map((option) => (
+              {(
+                [
+                  "Spelling Changes",
+                  "Paraphrase",
+                  "Negation / Contrast",
+                  "Custom Edit",
+                ] as const
+              ).map((option) => (
                 <button
                   className={perturbation === option ? "selected" : ""}
                   key={option}
                   onClick={() => {
                     setPerturbation(option);
-                    setTested(false);
+                    setVariantResult(null);
+
+                    if (option === "Custom Edit") {
+                      setIsEditingVariant(true);
+                    } else {
+                      setIsEditingVariant(false);
+                      setModifiedText(generatePerturbation(text, option));
+                    }
                   }}
                   type="button"
                 >
@@ -385,43 +777,129 @@ onClick={() => {
               ))}
             </div>
           </div>
+
           <div className="text-comparison">
             <article className="glass text-panel">
               <div className="panel-label">
                 <span>Original sentence</span>
                 <span className="panel-tag">CONTROL</span>
               </div>
+
               <p>{text}</p>
-              {tested && <PredictionBadge label={result.sentiment} />}
+
+              <PredictionBadge
+                confidence={result.confidence}
+                label={result.sentiment}
+              />
             </article>
+
             <div className="comparison-arrow">
               <Icon name="arrow" size={20} />
             </div>
+
             <article className="glass text-panel modified">
               <div className="panel-label">
                 <span>Modified sentence</span>
-                <span className="panel-tag">VARIANT</span>
+                <span className="panel-tag">
+                  {perturbation === "Custom Edit"
+                    ? "EDITABLE VARIANT"
+                    : "PERTURBATION"}
+                </span>
               </div>
-              <p>{modifiedText}</p>
-              {tested && <PredictionBadge label={result.sentiment} />}
+
+              {perturbation === "Custom Edit" || isEditingVariant ? (
+                <textarea
+                  className="editable-variant-input"
+                  onChange={(event) => {
+                    setModifiedText(event.target.value);
+                    setVariantResult(null);
+                  }}
+                  value={modifiedText}
+                />
+              ) : (
+                <p>{modifiedText}</p>
+              )}
+
+              {variantResult && (
+                <PredictionBadge
+                  confidence={variantResult.confidence}
+                  label={variantResult.sentiment}
+                />
+              )}
             </article>
           </div>
+
           <div className="test-footer">
-            {tested ? (
-              <div className="consistent-result">
-                <span className="result-check">
-                  <Icon name="check" size={17} />
-                </span>
-                <div>
-                  <strong>Prediction Consistent</strong>
-                  <small>The model remained stable after this modification.</small>
-                </div>
-              </div>
+            {variantResult ? (
+              <>
+                {isFlipped && (
+                  <div className="inconsistent-result">
+                    <span className="result-alert danger">
+                      <Icon name="alert" size={17} />
+                    </span>
+
+                    <div>
+                      <strong>
+                        Adversarial Vulnerability: Prediction Flipped!
+                      </strong>
+                      <small>
+                        Classification changed from {result.sentiment} (
+                        {result.confidence}%) to {variantResult.sentiment} (
+                        {variantResult.confidence}%).
+                      </small>
+                    </div>
+                  </div>
+                )}
+
+                {isDegraded && !isFlipped && (
+                  <div className="degraded-result">
+                    <span className="result-alert warning">
+                      <Icon name="alert" size={17} />
+                    </span>
+
+                    <div>
+                      <strong>
+                        Confidence Degraded (-{confidenceDiff.toFixed(1)}%)
+                      </strong>
+                      <small>
+                        Maintained {variantResult.sentiment} classification,
+                        but confidence dropped from {result.confidence}% to{" "}
+                        {variantResult.confidence}%.
+                      </small>
+                    </div>
+                  </div>
+                )}
+
+                {isConsistent && !isDegraded && (
+                  <div className="consistent-result">
+                    <span className="result-check">
+                      <Icon name="check" size={17} />
+                    </span>
+
+                    <div>
+                      <strong>Prediction Robust & Consistent</strong>
+                      <small>
+                        The model remained stable with{" "}
+                        {variantResult.confidence}% confidence after
+                        modification.
+                      </small>
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
-              <p>Run the test to compare predictions across both versions.</p>
+              <p>
+                Click "Run Test" to evaluate the modified sentence with the
+                live model.
+              </p>
             )}
-            <Button icon="play" onClick={() => setTested(true)}>
-              Run Test
+
+            <Button
+              disabled={testingVariant || !modifiedText.trim()}
+              icon={testingVariant ? undefined : "play"}
+              onClick={runRobustnessTest}
+            >
+              {testingVariant ? "Testing Variant…" : "Run Test"}
             </Button>
           </div>
         </section>
@@ -430,20 +908,20 @@ onClick={() => {
   );
 }
 
-function PredictionBadge({ label }: { label: string }) {
+function PredictionBadge({
+  label,
+  confidence,
+}: {
+  label: string;
+  confidence: number;
+}) {
   return (
     <div className="prediction-badge">
       <span className={`sentiment-dot ${label.toLowerCase()}`} />
-      {label} · 94%
+      {label} · {confidence}%
     </div>
   );
 }
-
-const metrics = [
-  { label: "Clean Accuracy", value: "91.8%", change: "+2.4%", tone: "lilac" },
-  { label: "Robustness Score", value: "84.2%", change: "+5.1%", tone: "blue" },
-  { label: "Prediction Consistency", value: "87.6%", change: "+3.8%", tone: "pink" },
-];
 
 function MetricCard({
   label,
@@ -463,7 +941,7 @@ function MetricCard({
       </div>
       <strong>{value}</strong>
       <small>
-        <b>{change}</b> from prior run
+        <b>{change}</b>
       </small>
     </article>
   );
@@ -479,15 +957,23 @@ function BarChart({
       {series.map((item) => (
         <div className="bar-group" key={item.label}>
           <div className="bars">
-            <span className="bar bar-primary" style={{ height: `${item.first}%` }}>
-              <em>{item.first}</em>
+            <span
+              className="bar bar-primary"
+              style={{ height: `${item.first}%` }}
+            >
+              <em>{item.first.toFixed(1)}</em>
             </span>
-            {item.second && (
-              <span className="bar bar-secondary" style={{ height: `${item.second}%` }}>
-                <em>{item.second}</em>
+
+            {item.second !== undefined && (
+              <span
+                className="bar bar-secondary"
+                style={{ height: `${item.second}%` }}
+              >
+                <em>{item.second.toFixed(1)}</em>
               </span>
             )}
           </div>
+
           <small>{item.label}</small>
         </div>
       ))}
@@ -500,11 +986,13 @@ function ChartCard({
   subtitle,
   children,
   legend,
+  badge = "EVALUATION DATA",
 }: {
   title: string;
   subtitle: string;
   children: ReactNode;
   legend?: string[];
+  badge?: string;
 }) {
   return (
     <article className="glass chart-card">
@@ -513,9 +1001,12 @@ function ChartCard({
           <h3>{title}</h3>
           <p>{subtitle}</p>
         </div>
-        <span className="sample-data">SAMPLE DATA</span>
+
+        <span className="sample-data">{badge}</span>
       </div>
+
       {children}
+
       {legend && (
         <div className="legend">
           {legend.map((item, index) => (
@@ -530,78 +1021,276 @@ function ChartCard({
   );
 }
 
-function Analytics({ back }: { back: () => void }) {
+function RobustnessTable({
+  data,
+}: {
+  data: RobustnessModelResult[] | null;
+}) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="empty-state">
+        <p>
+          Robustness results are not available yet. Run{" "}
+          <code>python evaluate_robustness.py</code> in the backend folder,
+          then refresh the API status.
+        </p>
+      </div>
+    );
+  }
+
+  const wordModel =
+    data.find((item) => item.model.toLowerCase().includes("word")) ?? data[0];
+
+  const charModel =
+    data.find((item) => item.model.toLowerCase().includes("character")) ??
+    data[1];
+
+  const perturbations = [
+    { key: "character_deletion", label: "Character deletion" },
+    { key: "character_swap", label: "Character swap" },
+    { key: "character_replacement", label: "Character replacement" },
+    { key: "character_repetition", label: "Character repetition" },
+  ];
+
+  const getFlipRate = (
+    model: RobustnessModelResult | undefined,
+    key: string,
+  ) => {
+    if (!model?.perturbations?.[key]) return null;
+
+    const item = model.perturbations[key];
+
+    if (typeof item.prediction_flip_rate === "number") {
+      const value = item.prediction_flip_rate;
+      return `${(value <= 1 ? value * 100 : value).toFixed(2)}%`;
+    }
+
+    return typeof item.flip_rate === "number"
+      ? `${item.flip_rate.toFixed(2)}%`
+      : "—";
+  };
+
+  return (
+    <div className="comparison-table robustness-table-wrap">
+      <div className="table-row table-head">
+        <span>Perturbation</span>
+        <span>Word-level model</span>
+        <span>Character-level model</span>
+      </div>
+
+      {perturbations.map((item) => (
+        <div className="table-row" key={item.key}>
+          <span>{item.label}</span>
+          <span>{getFlipRate(wordModel, item.key)}</span>
+          <span>{getFlipRate(charModel, item.key)}</span>
+        </div>
+      ))}
+
+      <p className="sample-note">
+        Prediction flip rate: percentage of predictions that changed after a
+        character edit. Lower means more stable; it does not by itself measure
+        correctness.
+      </p>
+    </div>
+  );
+}
+
+function Analytics({
+  back,
+  metricsData,
+  robustnessData,
+}: {
+  back: () => void;
+  metricsData: BackendMetrics | null;
+  robustnessData: RobustnessModelResult[] | null;
+}) {
+  const accuracyPercent = metricsData
+    ? `${(metricsData.accuracy * 100).toFixed(2)}%`
+    : "—";
+
+  const f1Percent = metricsData
+    ? `${(metricsData.f1_score * 100).toFixed(2)}%`
+    : "—";
+
+  const precisionPercent = metricsData
+    ? `${(metricsData.precision * 100).toFixed(2)}%`
+    : "—";
+
+  const recallPercent = metricsData
+    ? `${(metricsData.recall * 100).toFixed(2)}%`
+    : "—";
+
+  const cm = metricsData?.confusion_matrix;
+
   return (
     <main className="page">
       <PageHeader
         eyebrow="PERFORMANCE OVERVIEW"
-        subtitle="Understand how well your classifiers perform."
+        subtitle="Metrics from your trained IMDb sentiment model and measured character-perturbation tests."
         title="Model Analytics"
       />
+
       <section className="evaluation-snapshot">
         <div className="snapshot-intro">
           <span className="section-kicker">LATEST EVALUATION</span>
-          <h2>Test set summary</h2>
-          <p>IMDb sentiment · 2,000 examples · evaluated 14 May</p>
-          <span className="sample-note">Illustrative sample data</span>
+          <h2>IMDb Test Set Summary</h2>
+          <p>
+            {metricsData?.model || "TF-IDF + Logistic Regression"} ·{" "}
+            {metricsData?.testing_samples?.toLocaleString() ?? "—"} test reviews
+          </p>
+          <span className="sample-note">
+            {metricsData
+              ? "Live data from backend /metrics"
+              : "Waiting for backend metrics"}
+          </span>
         </div>
+
         <div className="metrics-grid">
-          {metrics.map((metric) => (
-            <MetricCard key={metric.label} {...metric} />
-          ))}
+          <MetricCard
+            label="Clean Accuracy"
+            value={accuracyPercent}
+            change="Test set"
+            tone="lilac"
+          />
+          <MetricCard
+            label="Precision"
+            value={precisionPercent}
+            change="Test set"
+            tone="blue"
+          />
+          <MetricCard
+            label="F1 Score"
+            value={f1Percent}
+            change="Test set"
+            tone="pink"
+          />
         </div>
       </section>
+
       <div className="analytics-grid">
         <ChartCard
-          legend={["Logistic Regression", "Transformer"]}
-          subtitle="Accuracy by evaluation category"
-          title="Model performance"
+          badge={metricsData ? "LIVE MODEL METRICS" : "NO BACKEND DATA"}
+          subtitle="Accuracy, precision, recall and F1 from the held-out test set."
+          title="Baseline model performance"
         >
           <BarChart
-            series={[
-              { label: "Accuracy", first: 82, second: 92 },
-              { label: "F1 Score", first: 78, second: 88 },
-              { label: "Robust", first: 69, second: 84 },
-            ]}
+            series={
+              metricsData
+                ? [
+                    {
+                      label: "Accuracy",
+                      first: metricsData.accuracy * 100,
+                    },
+                    {
+                      label: "Precision",
+                      first: metricsData.precision * 100,
+                    },
+                    {
+                      label: "Recall",
+                      first: metricsData.recall * 100,
+                    },
+                    {
+                      label: "F1 Score",
+                      first: metricsData.f1_score * 100,
+                    },
+                  ]
+                : []
+            }
           />
         </ChartCard>
+
         <ChartCard
-          legend={["Original text", "Modified text"]}
-          subtitle="Performance under text variation"
-          title="Original vs. modified"
+          badge="TEST SET CONFUSION MATRIX"
+          subtitle="Actual labels compared with model predictions."
+          title="Confusion Matrix"
         >
-          <BarChart
-            series={[
-              { label: "Logistic", first: 88, second: 71 },
-              { label: "Transformer", first: 93, second: 85 },
-            ]}
-          />
+          {cm ? (
+            <table className="confusion-matrix-table">
+              <thead>
+                <tr>
+                  <th>Actual / Predicted</th>
+                  <th>Negative</th>
+                  <th>Positive</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th>Actual Negative</th>
+                  <td className="cm-cell correct">
+                    {cm[0]?.[0] ?? "—"}
+                    <br />
+                    <small>True Negative</small>
+                  </td>
+                  <td className="cm-cell incorrect">
+                    {cm[0]?.[1] ?? "—"}
+                    <br />
+                    <small>False Positive</small>
+                  </td>
+                </tr>
+                <tr>
+                  <th>Actual Positive</th>
+                  <td className="cm-cell incorrect">
+                    {cm[1]?.[0] ?? "—"}
+                    <br />
+                    <small>False Negative</small>
+                  </td>
+                  <td className="cm-cell correct">
+                    {cm[1]?.[1] ?? "—"}
+                    <br />
+                    <small>True Positive</small>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          ) : (
+            <p className="sample-note">
+              Confusion matrix will appear when the backend metrics load.
+            </p>
+          )}
         </ChartCard>
+
         <ChartCard
-          legend={["Spelling changes", "Paraphrases"]}
-          subtitle="Consistency by perturbation type"
+          badge="LIVE ROBUSTNESS RESULTS"
+          subtitle="Prediction flip rate after each character perturbation. Lower is more stable."
           title="Robustness by change type"
         >
-          <div className="horizontal-chart">
-            <HorizontalBar label="Logistic Regression" values={[68, 75]} />
-            <HorizontalBar label="Transformer Model" values={[82, 89]} />
-          </div>
+          <RobustnessTable data={robustnessData} />
         </ChartCard>
+
         <article className="glass failures-card">
           <div className="chart-head">
             <div>
-              <h3>Common prediction failures</h3>
-              <p>Where models need the most attention</p>
+              <h3>Experiment scope</h3>
+              <p>What the current robustness test measures</p>
             </div>
-            <span className="sample-data">SAMPLE DATA</span>
+            <span className="sample-data">METHODOLOGY</span>
           </div>
+
           <div className="failure-list">
-            <FailureItem label="Negation & mixed sentiment" value="34%" tone="pink" />
-            <FailureItem label="Informal spelling" value="27%" tone="lilac" />
-            <FailureItem label="Long-form paraphrases" value="18%" tone="blue" />
+            <FailureItem
+              label="Character deletion"
+              tone="lilac"
+              value="Tested"
+            />
+            <FailureItem
+              label="Character swap"
+              tone="blue"
+              value="Tested"
+            />
+            <FailureItem
+              label="Replacement and repetition"
+              tone="pink"
+              value="Tested"
+            />
           </div>
+
+          <p className="sample-note">
+            These tests alter one character in one randomly selected word per
+            review. They do not yet measure general paraphrase robustness.
+          </p>
         </article>
       </div>
+
       <div className="page-footer-action">
         <Button icon="arrow" onClick={back} variant="secondary">
           Back to Playground
@@ -611,7 +1300,13 @@ function Analytics({ back }: { back: () => void }) {
   );
 }
 
-function HorizontalBar({ label, values }: { label: string; values: number[] }) {
+function HorizontalBar({
+  label,
+  values,
+}: {
+  label: string;
+  values: number[];
+}) {
   return (
     <div className="horizontal-row">
       <span>{label}</span>
@@ -623,7 +1318,15 @@ function HorizontalBar({ label, values }: { label: string; values: number[] }) {
   );
 }
 
-function FailureItem({ label, value, tone }: { label: string; value: string; tone: string }) {
+function FailureItem({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: string;
+}) {
   return (
     <div className="failure-item">
       <span className={`failure-icon ${tone}`}>
@@ -635,39 +1338,85 @@ function FailureItem({ label, value, tone }: { label: string; value: string; ton
   );
 }
 
-const modelData = [
-  {
-    name: "Logistic Regression",
-    type: "CLASSIC BASELINE",
-    description: "Traditional machine learning baseline using efficient TF-IDF text features.",
-    accuracy: "88.4%",
-    f1: "86.9%",
-    robust: "74.2%",
-    icon: "LR",
-  },
-  {
-    name: "Transformer Model",
-    type: "CONTEXTUAL MODEL",
-    description: "Pretrained language model that understands contextual text representations.",
-    accuracy: "93.1%",
-    f1: "92.4%",
-    robust: "86.7%",
-    icon: "TM",
-  },
-];
+function averageFlipRate(
+  model: RobustnessModelResult | undefined,
+): number | null {
+  if (!model?.perturbations) return null;
 
-function Comparison() {
+  const values = Object.values(model.perturbations)
+    .map((item) => {
+      if (typeof item.prediction_flip_rate === "number") {
+        const value = item.prediction_flip_rate;
+        return value <= 1 ? value * 100 : value;
+      }
+
+      return typeof item.flip_rate === "number" ? item.flip_rate : null;
+    })
+    .filter((value): value is number => value !== null);
+
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
+}
+
+function Comparison({
+  metricsData,
+  robustnessData,
+}: {
+  metricsData: BackendMetrics | null;
+  robustnessData: RobustnessModelResult[] | null;
+}) {
+  const wordModel = robustnessData?.find((item) =>
+    item.model.toLowerCase().includes("word"),
+  );
+
+  const charModel = robustnessData?.find((item) =>
+    item.model.toLowerCase().includes("character"),
+  );
+
+  const wordFlip = averageFlipRate(wordModel);
+  const charFlip = averageFlipRate(charModel);
+
+  const percent = (value: number | undefined | null) =>
+    value == null ? "—" : `${(value * 100).toFixed(2)}%`;
+
+  const flipPercent = (value: number | null) =>
+    value == null ? "—" : `${value.toFixed(2)}%`;
+
+  const models = [
+    {
+      name: "Word-level TF-IDF",
+      type: "WORD N-GRAM BASELINE",
+      description:
+        "Word unigrams and bigrams with TF-IDF weighting and Logistic Regression.",
+      accuracy: metricsData ? percent(metricsData.accuracy) : "—",
+      f1: metricsData ? percent(metricsData.f1_score) : "—",
+      flip: flipPercent(wordFlip),
+      icon: "W",
+    },
+    {
+      name: "Character-level TF-IDF",
+      type: "CHARACTER N-GRAM MODEL",
+      description:
+        "Character n-grams designed to capture subword patterns and some spelling variations.",
+      accuracy: charModel ? percent(charModel.original_accuracy) : "—",
+      f1: "Not reported",
+      flip: flipPercent(charFlip),
+      icon: "C",
+    },
+  ];
+
   return (
     <main className="page">
       <PageHeader
         eyebrow="HEAD-TO-HEAD EVALUATION"
-        subtitle="Find out which model handles text variations best."
+        subtitle="Compare the two models actually trained and evaluated in this project. No transformer benchmark is shown because one is not connected."
         title="Compare Your Models"
       />
+
       <div className="model-grid">
-        {modelData.map((model, index) => (
-          <article className={`glass model-card ${index ? "winner" : ""}`} key={model.name}>
-            {index === 1 && <span className="best-label">STRONGEST OVERALL</span>}
+        {models.map((model) => (
+          <article className="glass model-card" key={model.name}>
             <div className="model-title">
               <span className="model-icon">{model.icon}</span>
               <div>
@@ -675,10 +1424,12 @@ function Comparison() {
                 <h2>{model.name}</h2>
               </div>
             </div>
+
             <p>{model.description}</p>
+
             <div className="model-stats">
               <div>
-                <span>Accuracy</span>
+                <span>Clean accuracy</span>
                 <strong>{model.accuracy}</strong>
               </div>
               <div>
@@ -686,81 +1437,167 @@ function Comparison() {
                 <strong>{model.f1}</strong>
               </div>
               <div>
-                <span>Robustness</span>
-                <strong>{model.robust}</strong>
+                <span>Avg. flip rate</span>
+                <strong>{model.flip}</strong>
               </div>
             </div>
-            <span className="sample-note">Sample evaluation data</span>
+
+            <span className="sample-note">
+              {robustnessData
+                ? "Measured project results"
+                : "Waiting for robustness results"}
+            </span>
           </article>
         ))}
       </div>
+
       <div className="comparison-lower">
         <article className="glass comparison-table-card">
           <div className="chart-head">
             <div>
               <h3>Detailed comparison</h3>
-              <p>Performance across core evaluation metrics</p>
+              <p>Values are populated from the backend evaluation files.</p>
             </div>
-            <span className="sample-data">SAMPLE DATA</span>
+            <span className="sample-data">PROJECT RESULTS</span>
           </div>
+
           <div className="comparison-table">
             <div className="table-row table-head">
               <span>Metric</span>
-              <span>Logistic</span>
-              <span>Transformer</span>
+              <span>Word-level</span>
+              <span>Character-level</span>
             </div>
-            {[
-              ["Clean accuracy", "88.4%", "93.1%"],
-              ["Robust accuracy", "74.2%", "86.7%"],
-              ["F1-score", "86.9%", "92.4%"],
-              ["Prediction consistency", "79.8%", "89.5%"],
-            ].map((row) => (
-              <div className="table-row" key={row[0]}>
-                <span>{row[0]}</span>
-                <span>{row[1]}</span>
-                <span className="best-value">
-                  {row[2]} <Icon name="check" size={14} />
-                </span>
-              </div>
-            ))}
+
+            <div className="table-row">
+              <span>Clean accuracy</span>
+              <span>
+                {metricsData ? percent(metricsData.accuracy) : "—"}
+              </span>
+              <span>
+                {charModel ? percent(charModel.original_accuracy) : "—"}
+              </span>
+            </div>
+
+            <div className="table-row">
+              <span>Average prediction flip rate</span>
+              <span>{flipPercent(wordFlip)}</span>
+              <span>{flipPercent(charFlip)}</span>
+            </div>
+
+            <div className="table-row">
+              <span>Precision</span>
+              <span>
+                {metricsData ? percent(metricsData.precision) : "—"}
+              </span>
+              <span>Not reported</span>
+            </div>
+
+            <div className="table-row">
+              <span>Recall</span>
+              <span>{metricsData ? percent(metricsData.recall) : "—"}</span>
+              <span>Not reported</span>
+            </div>
+
+            <div className="table-row">
+              <span>F1-score</span>
+              <span>{metricsData ? percent(metricsData.f1_score) : "—"}</span>
+              <span>Not reported</span>
+            </div>
           </div>
         </article>
+
         <ChartCard
-          legend={["Logistic Regression", "Transformer"]}
-          subtitle="Higher is better"
-          title="Metric overview"
+          badge="MEASURED RESULTS"
+          subtitle="Prediction flip rate by character edit. Lower values indicate fewer changed predictions."
+          title="Robustness detail"
         >
-          <BarChart
-            series={[
-              { label: "Clean", first: 88, second: 93 },
-              { label: "Robust", first: 74, second: 87 },
-              { label: "F1", first: 87, second: 92 },
-              { label: "Consistency", first: 80, second: 90 },
-            ]}
-          />
+          <RobustnessTable data={robustnessData} />
         </ChartCard>
       </div>
     </main>
   );
 }
 
-function Reports() {
+function Reports({
+  metricsData,
+  robustnessData,
+}: {
+  metricsData: BackendMetrics | null;
+  robustnessData: RobustnessModelResult[] | null;
+}) {
+  const cleanAccuracy = metricsData
+    ? `${(metricsData.accuracy * 100).toFixed(2)}%`
+    : "—";
+
+  const wordModel = robustnessData?.find((item) =>
+    item.model.toLowerCase().includes("word"),
+  );
+
+  const charModel = robustnessData?.find((item) =>
+    item.model.toLowerCase().includes("character"),
+  );
+
+  const wordFlip = averageFlipRate(wordModel);
+  const charFlip = averageFlipRate(charModel);
+
+  const flipText = (value: number | null) =>
+    value == null ? "—" : `${value.toFixed(2)}%`;
+
   const download = (type: string) => {
     if (type === "PDF") {
       window.print();
       return;
     }
-    const blob = new Blob(
+
+    const rows: (string | number)[][] = [
       [
-        "model,clean_accuracy,robust_accuracy\nLogistic Regression,88.4,74.2\nTransformer,93.1,86.7",
+        "model",
+        "clean_accuracy_percent",
+        "precision_percent",
+        "recall_percent",
+        "f1_percent",
+        "average_prediction_flip_rate_percent",
+        "test_samples",
       ],
-      { type: "text/plain" },
-    );
+      [
+        metricsData?.model || "Word-level TF-IDF + Logistic Regression",
+        metricsData ? (metricsData.accuracy * 100).toFixed(2) : "",
+        metricsData ? (metricsData.precision * 100).toFixed(2) : "",
+        metricsData ? (metricsData.recall * 100).toFixed(2) : "",
+        metricsData ? (metricsData.f1_score * 100).toFixed(2) : "",
+        wordFlip == null ? "" : wordFlip.toFixed(2),
+        metricsData?.testing_samples ?? "",
+      ],
+      [
+        charModel?.model || "Character-level TF-IDF + Logistic Regression",
+        charModel ? (charModel.original_accuracy * 100).toFixed(2) : "",
+        "",
+        "",
+        "",
+        charFlip == null ? "" : charFlip.toFixed(2),
+        "",
+      ],
+    ];
+
+    const csvContent = rows
+      .map((row) =>
+        row
+          .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+          .join(","),
+      )
+      .join("\n");
+
+    const blob = new Blob([csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
+
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
+
     link.href = url;
     link.download = "semanticshield-report.csv";
     link.click();
+
     URL.revokeObjectURL(url);
   };
 
@@ -768,95 +1605,173 @@ function Reports() {
     <main className="page">
       <PageHeader
         eyebrow="REPORT CENTER"
-        subtitle="Your model evaluation, summarized clearly."
+        subtitle="Export the metrics and robustness results generated by your own trained models."
         title="Evaluation Reports"
       />
+
       <article className="glass report-card">
         <div className="report-top">
           <div className="document-title">
             <span className="document-icon">
               <Icon name="file" size={25} />
             </span>
+
             <div>
-              <span className="section-kicker">SEMANTICSHIELD · EVALUATION 04</span>
+              <span className="section-kicker">
+                SEMANTICSHIELD · EVALUATION REPORT
+              </span>
               <h2>Text Classification Robustness Report</h2>
-              <p>Generated from the latest evaluation run · Sample data</p>
+              <p>Generated from the current backend evaluation files</p>
             </div>
           </div>
+
           <span className="complete-badge">
-            <Icon name="check" size={14} /> Complete
+            <Icon name="check" size={14} /> Project report
           </span>
         </div>
+
         <div className="report-divider" />
+
         <section className="report-section summary-section">
           <div>
             <span className="report-index">01</span>
             <h3>Overall evaluation summary</h3>
             <p>
-              Both models perform strongly on clean text. The Transformer Model shows greater
-              resilience to paraphrasing and spelling changes, retaining more of its baseline
-              accuracy under variation.
+              The word-level TF-IDF + Logistic Regression model achieved{" "}
+              {cleanAccuracy} accuracy on the held-out IMDb test set.
+              Robustness results compare prediction changes after character
+              deletion, swapping, replacement and repetition. Flip rate
+              measures stability, not whether a prediction is correct.
             </p>
           </div>
+
           <div className="report-score">
-            <strong>84.2</strong>
-            <span>OVERALL ROBUSTNESS</span>
-            <small>Strong performance</small>
+            <strong>{cleanAccuracy}</strong>
+            <span>CLEAN ACCURACY</span>
+            <small>
+              {metricsData
+                ? "Measured test-set result"
+                : "Waiting for backend"}
+            </small>
           </div>
         </section>
+
         <section className="report-section">
           <div className="report-section-heading">
             <span className="report-index">02</span>
             <h3>Evaluation details</h3>
           </div>
+
           <div className="details-grid">
-            <Detail label="Models evaluated" value="Logistic Regression + Transformer" />
-            <Detail label="Dataset" value="Sentiment Reviews · Test split" />
-            <Detail label="Clean accuracy" value="91.8%" />
-            <Detail label="Robust accuracy" value="84.2%" />
+            <Detail
+              label="Model evaluated"
+              value={
+                metricsData?.model ||
+                "Word-level TF-IDF + Logistic Regression"
+              }
+            />
+
+            <Detail
+              label="Dataset"
+              value={
+                metricsData
+                  ? `${metricsData.dataset} (${metricsData.testing_samples.toLocaleString()} test samples)`
+                  : "Not loaded"
+              }
+            />
+
+            <Detail label="Word model accuracy" value={cleanAccuracy} />
+
+            <Detail
+              label="Word model average flip rate"
+              value={flipText(wordFlip)}
+            />
+
+            <Detail
+              label="Character model accuracy"
+              value={
+                charModel
+                  ? `${(charModel.original_accuracy * 100).toFixed(2)}%`
+                  : "—"
+              }
+            />
+
+            <Detail
+              label="Character model average flip rate"
+              value={flipText(charFlip)}
+            />
           </div>
         </section>
+
         <div className="report-columns">
           <section className="report-section findings">
             <div className="report-section-heading">
               <span className="report-index">03</span>
-              <h3>Main findings</h3>
+              <h3>Measured findings</h3>
             </div>
+
             <ul>
-              <li><Icon name="check" size={15} /> Paraphrases were handled better than spelling errors.</li>
-              <li><Icon name="check" size={15} /> Contextual modeling improved consistency by 9.7%.</li>
-              <li><Icon name="alert" size={15} /> Mixed sentiment remains the most common failure.</li>
+              <li>
+                <Icon name="check" size={15} />
+                Clean accuracy and classification metrics are read from the
+                trained model's metrics file.
+              </li>
+              <li>
+                <Icon name="check" size={15} />
+                Character-level and word-level models are compared using
+                measured perturbation results.
+              </li>
+              <li>
+                <Icon name="alert" size={15} />
+                Current robustness evaluation applies one random character
+                edit to one randomly selected word per review; it is not a
+                comprehensive paraphrase test.
+              </li>
             </ul>
           </section>
+
           <section className="report-section preview-chart">
             <div className="report-section-heading">
               <span className="report-index">04</span>
-              <h3>Accuracy preview</h3>
+              <h3>Prediction flip rate</h3>
             </div>
-            <BarChart
-              series={[
-                { label: "Clean", first: 92, second: 88 },
-                { label: "Robust", first: 84, second: 74 },
-              ]}
-            />
+
+            <RobustnessTable data={robustnessData} />
           </section>
         </div>
+
         <section className="report-section failure-example">
           <div className="report-section-heading">
             <span className="report-index">05</span>
-            <h3>Common failure example</h3>
+            <h3>Interpretation note</h3>
           </div>
+
           <blockquote>
-            “The experience wasn’t terrible, but I wouldn’t exactly recommend it.”
-            <span>Mixed polarity and indirect negation caused inconsistent predictions.</span>
+            Lower prediction flip rate means the model's label changed less
+            often after the tested character edits.
+            <span>
+              It does not guarantee higher accuracy on modified text. Evaluate
+              accuracy against ground-truth labels separately for each
+              perturbation.
+            </span>
           </blockquote>
         </section>
+
         <div className="report-actions">
-          <p>Export this report to share your evaluation results.</p>
+          <p>
+            Export the current metrics to CSV or use your browser's print
+            dialog to save a PDF.
+          </p>
+
           <div>
-            <Button icon="download" onClick={() => download("CSV")} variant="secondary">
+            <Button
+              icon="download"
+              onClick={() => download("CSV")}
+              variant="secondary"
+            >
               Download CSV
             </Button>
+
             <Button icon="file" onClick={() => download("PDF")}>
               Export PDF
             </Button>
@@ -878,20 +1793,109 @@ function Detail({ label, value }: { label: string; value: string }) {
 
 export default function App() {
   const [page, setPage] = useState<Page>("playground");
+  const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
+  const [metricsData, setMetricsData] = useState<BackendMetrics | null>(null);
+  const [robustnessData, setRobustnessData] =
+    useState<RobustnessModelResult[] | null>(null);
+
+  async function checkBackend() {
+    setApiStatus("checking");
+
+    try {
+      const health = await fetchFromApi<{
+        status: string;
+        model?: string;
+      }>("/health");
+
+      if (health?.status !== "healthy") {
+        setApiStatus("offline");
+        return;
+      }
+
+      setApiStatus("online");
+
+      try {
+        const metrics =
+          await fetchFromApi<BackendMetrics>("/metrics");
+        setMetricsData(metrics);
+      } catch (error) {
+        console.error("Could not load model metrics:", error);
+        setMetricsData(null);
+      }
+
+      try {
+        const robustness =
+          await fetchFromApi<RobustnessResponse>("/robustness");
+        setRobustnessData(robustness.results);
+      } catch (error) {
+        console.error("Could not load robustness results:", error);
+        setRobustnessData(null);
+      }
+    } catch (error) {
+      console.error("Backend health check failed:", error);
+      setApiStatus("offline");
+      setMetricsData(null);
+      setRobustnessData(null);
+    }
+  }
+
+  useEffect(() => {
+    void checkBackend();
+  }, []);
 
   return (
     <div className="app">
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
       <div className="ambient ambient-three" />
-      <AppNav page={page} setPage={setPage} />
-      {page === "playground" && <Playground goToAnalytics={() => setPage("analytics")} />}
-      {page === "analytics" && <Analytics back={() => setPage("playground")} />}
-      {page === "comparison" && <Comparison />}
-      {page === "reports" && <Reports />}
+
+      <AppNav
+        apiStatus={apiStatus}
+        onRefreshStatus={checkBackend}
+        page={page}
+        setPage={setPage}
+      />
+
+      {page === "playground" && (
+        <Playground
+          goToAnalytics={() => setPage("analytics")}
+          onModelTested={() => {
+            if (apiStatus !== "online") {
+              void checkBackend();
+            }
+          }}
+        />
+      )}
+
+      {page === "analytics" && (
+        <Analytics
+          back={() => setPage("playground")}
+          metricsData={metricsData}
+          robustnessData={robustnessData}
+        />
+      )}
+
+      {page === "comparison" && (
+        <Comparison
+          metricsData={metricsData}
+          robustnessData={robustnessData}
+        />
+      )}
+
+      {page === "reports" && (
+        <Reports
+          metricsData={metricsData}
+          robustnessData={robustnessData}
+        />
+      )}
+
       <footer className="site-footer">
-        <span><Icon name="shield" size={15} /> SemanticShield</span>
-        <small>Robustness insights for trustworthy text classification.</small>
+        <span>
+          <Icon name="shield" size={15} /> SemanticShield
+        </span>
+        <small>
+          Robustness insights for trustworthy text classification.
+        </small>
       </footer>
     </div>
   );

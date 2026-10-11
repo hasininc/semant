@@ -1,0 +1,54 @@
+[
+    {
+        "model": "Word-level TF-IDF",
+        "original_accuracy": 87.72,
+        "perturbations": {
+            "character_deletion": {
+                "accuracy": 87.76,
+                "accuracy_drop": -0.04,
+                "prediction_flip_rate": 1.0
+            },
+            "character_swap": {
+                "accuracy": 87.44,
+                "accuracy_drop": 0.28,
+                "prediction_flip_rate": 0.76
+            },
+            "character_replacement": {
+                "accuracy": 87.84,
+                "accuracy_drop": -0.12,
+                "prediction_flip_rate": 0.68
+            },
+            "character_repetition": {
+                "accuracy": 87.76,
+                "accuracy_drop": -0.04,
+                "prediction_flip_rate": 0.92
+            }
+        }
+    },
+    {
+        "model": "Character-level TF-IDF",
+        "original_accuracy": 87.32,
+        "perturbations": {
+            "character_deletion": {
+                "accuracy": 87.32,
+                "accuracy_drop": 0.0,
+                "prediction_flip_rate": 0.32
+            },
+            "character_swap": {
+                "accuracy": 87.32,
+                "accuracy_drop": 0.0,
+                "prediction_flip_rate": 0.56
+            },
+            "character_replacement": {
+                "accuracy": 87.28,
+                "accuracy_drop": 0.04,
+                "prediction_flip_rate": 0.76
+            },
+            "character_repetition": {
+                "accuracy": 87.16,
+                "accuracy_drop": 0.16,
+                "prediction_flip_rate": 0.32
+            }
+        }
+    }
+]
