@@ -11,6 +11,7 @@ from inference import predict as run_prediction, get_available_models
 BASE_DIR = Path(__file__).resolve().parent
 MODELS_DIR = BASE_DIR / "models"
 METRICS_PATH = MODELS_DIR / "metrics.json"
+CHAR_METRICS_PATH = MODELS_DIR / "char_metrics.json"
 ALL_METRICS_PATH = MODELS_DIR / "all_clean_metrics.json"
 ROBUSTNESS_PATH = MODELS_DIR / "robustness_results.json"
 
@@ -47,7 +48,8 @@ app.add_middleware(
 
 class PredictionRequest(BaseModel):
     text: str = Field(min_length=1, max_length=10000)
-    model: Optional[str] = Field(default="tfidf", description="Model ID: 'tfidf', 'distilbert', 'distilbert_robust'")
+    model: Optional[str] = Field(default=None, description="Model ID: 'tfidf', 'tfidf_char', 'distilbert', 'distilbert_robust'")
+    model_type: Optional[str] = Field(default=None, description="Alias for model parameter")
 
 
 # ---------------- ENDPOINTS ----------------
@@ -91,6 +93,12 @@ def get_metrics(model: Optional[str] = Query(default=None)):
     if model == "all" and ALL_METRICS_PATH.exists():
         with open(ALL_METRICS_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
+
+    if model in ("char", "tfidf_char"):
+        if CHAR_METRICS_PATH.exists():
+            with open(CHAR_METRICS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        raise HTTPException(status_code=404, detail="Character TF-IDF metrics not found.")
 
     if model == "distilbert":
         dist_path = MODELS_DIR / "distilbert_metrics.json"
@@ -141,13 +149,15 @@ def predict(request: PredictionRequest):
     if not text:
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
 
-    target_model = request.model or "tfidf"
-    # Normalize model ID aliases if frontend sends descriptive names
+    target_model = request.model or request.model_type or "tfidf"
     target_lower = target_model.lower()
+
     if "robust" in target_lower:
         model_id = "distilbert_robust"
     elif "distilbert" in target_lower or "transformer" in target_lower:
         model_id = "distilbert"
+    elif "char" in target_lower:
+        model_id = "tfidf_char"
     else:
         model_id = "tfidf"
 

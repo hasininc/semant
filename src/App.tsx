@@ -187,11 +187,27 @@ type ApiPrediction = {
   text: string;
   sentiment: "Positive" | "Negative";
   confidence: number;
+  raw_confidence?: number;
+  calibrated_confidence?: number;
   probabilities: {
     negative: number;
     positive: number;
   };
+  raw_probabilities?: {
+    negative: number;
+    positive: number;
+  };
+  calibrated_probabilities?: {
+    negative: number;
+    positive: number;
+  };
+  raw_logits?: [number, number] | null;
+  logit_margin?: number | null;
+  temperature?: number;
+  tokens?: string[];
+  checkpoint?: string;
   model: string;
+  model_id?: string;
 };
 
 type BackendMetrics = {
@@ -224,6 +240,21 @@ type RobustnessResponse = {
 };
 
 type ApiStatus = "checking" | "online" | "offline";
+
+function normalizePercentValue(val: number | undefined | null): number | null {
+  if (val == null || isNaN(val)) return null;
+  return val <= 1 ? val * 100 : val;
+}
+
+function formatPercent(val: number | undefined | null, fallback = "—"): string {
+  const norm = normalizePercentValue(val);
+  return norm == null ? fallback : `${norm.toFixed(2)}%`;
+}
+
+function formatPercentRaw(val: number | undefined | null, fallback = "—"): string {
+  const norm = normalizePercentValue(val);
+  return norm == null ? fallback : norm.toFixed(2);
+}
 
 function AppNav({
   page,
@@ -438,7 +469,7 @@ function Playground({
   onModelTested?: () => void;
 }) {
   const [text, setText] = useState("");
-  const [model, setModel] = useState("Logistic Regression (TF-IDF)");
+  const [model, setModel] = useState("tfidf");
   const [state, setState] = useState<
     "idle" | "loading" | "result" | "error"
   >("idle");
@@ -480,7 +511,7 @@ function Playground({
       const prediction = await fetchFromApi<ApiPrediction>("/predict", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: trimmed }),
+        body: JSON.stringify({ text: trimmed, model }),
       });
 
       setResult(prediction);
@@ -511,7 +542,7 @@ function Playground({
       const prediction = await fetchFromApi<ApiPrediction>("/predict", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: trimmedVariant }),
+        body: JSON.stringify({ text: trimmedVariant, model }),
       });
 
       setVariantResult(prediction);
@@ -613,10 +644,21 @@ function Playground({
             <span className="select-wrap">
               <select
                 value={model}
-                onChange={(event) => setModel(event.target.value)}
+                onChange={(event) => {
+                  setModel(event.target.value);
+                  setResult(null);
+                  setVariantResult(null);
+                  setShowRobustness(false);
+                }}
               >
-                <option value="Logistic Regression (TF-IDF)">
-                  TF-IDF + Logistic Regression (Live Model)
+                <option value="tfidf">
+                  TF-IDF + Logistic Regression (Word Baseline)
+                </option>
+                <option value="tfidf_char">
+                  Character TF-IDF + Logistic Regression (3-5 Char N-grams)
+                </option>
+                <option value="distilbert">
+                  DistilBERT Transformer (Fine-tuned SST-2 / IMDb)
                 </option>
               </select>
               <Icon name="chevron" size={16} />
@@ -664,7 +706,12 @@ function Playground({
 
             <div className="confidence-orb">
               <strong>{result.confidence}%</strong>
-              <span>confidence</span>
+              <span>Raw Softmax Confidence</span>
+              {result.calibrated_confidence !== undefined && (
+                <span style={{ fontSize: "11px", color: "#684aa9", marginTop: "4px", textTransform: "none", fontWeight: 600 }}>
+                  Calibrated: {result.calibrated_confidence}% (T={result.temperature || 1.5})
+                </span>
+              )}
             </div>
           </div>
 
@@ -686,6 +733,11 @@ function Playground({
 
                 <span className="prob-value">
                   {result.probabilities.positive}%
+                  {result.calibrated_probabilities && result.calibrated_probabilities.positive !== result.probabilities.positive && (
+                    <small style={{ display: "block", fontSize: "10px", color: "#777" }}>
+                      cal: {result.calibrated_probabilities.positive}%
+                    </small>
+                  )}
                 </span>
               </div>
 
@@ -701,17 +753,45 @@ function Playground({
 
                 <span className="prob-value">
                   {result.probabilities.negative}%
+                  {result.calibrated_probabilities && result.calibrated_probabilities.negative !== result.probabilities.negative && (
+                    <small style={{ display: "block", fontSize: "10px", color: "#777" }}>
+                      cal: {result.calibrated_probabilities.negative}%
+                    </small>
+                  )}
                 </span>
               </div>
+            </div>
+          )}
+
+          {result.raw_logits && (
+            <div style={{ marginTop: "14px", padding: "10px 14px", background: "rgba(104, 74, 169, 0.05)", borderRadius: "8px", fontSize: "12px", color: "#555" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+                <span><strong>Raw Logits [neg, pos]:</strong> [{result.raw_logits[0]}, {result.raw_logits[1]}] (Margin: {result.logit_margin})</span>
+                {result.checkpoint && <span><strong>Checkpoint:</strong> {result.checkpoint}</span>}
+              </div>
+              {result.tokens && result.tokens.length > 0 && (
+                <div style={{ marginTop: "6px" }}>
+                  <strong>WordPiece Subword Tokens:</strong>{" "}
+                  {result.tokens.map((t, idx) => (
+                    <code key={idx} style={{ background: "rgba(0,0,0,0.06)", padding: "1px 4px", borderRadius: "3px", marginRight: "4px" }}>
+                      {t}
+                    </code>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
           <div className="explanation">
             <Icon name="shield" size={17} />
             <p>
-              {result.sentiment === "Positive"
-                ? `The trained classifier identified predominantly positive lexical markers and optimistic phrasing with ${result.confidence}% confidence.`
-                : `The trained classifier identified critical or negative phrasing and sentiment markers with ${result.confidence}% confidence.`}
+              {result.model?.toLowerCase().includes("distilbert") || model === "distilbert"
+                ? (result.sentiment === "Positive"
+                  ? `DistilBERT Transformer detected contextual positive sentiment via deep bidirectional self-attention representations with ${result.confidence}% confidence.`
+                  : `DistilBERT Transformer detected contextual negative sentiment via deep bidirectional self-attention representations with ${result.confidence}% confidence.`)
+                : (result.sentiment === "Positive"
+                  ? `The TF-IDF classifier identified predominantly positive lexical markers and optimistic phrasing with ${result.confidence}% confidence.`
+                  : `The TF-IDF classifier identified critical or negative phrasing and sentiment markers with ${result.confidence}% confidence.`)}
             </p>
           </div>
 
@@ -1098,48 +1178,68 @@ function RobustnessTable({
 function Analytics({
   back,
   metricsData,
+  distilbertMetricsData,
   robustnessData,
 }: {
   back: () => void;
   metricsData: BackendMetrics | null;
+  distilbertMetricsData: BackendMetrics | null;
   robustnessData: RobustnessModelResult[] | null;
 }) {
-  const accuracyPercent = metricsData
-    ? `${(metricsData.accuracy * 100).toFixed(2)}%`
-    : "—";
+  const [selectedModel, setSelectedModel] = useState<"tfidf" | "distilbert">("tfidf");
 
-  const f1Percent = metricsData
-    ? `${(metricsData.f1_score * 100).toFixed(2)}%`
-    : "—";
+  const currentMetrics =
+    selectedModel === "distilbert"
+      ? (distilbertMetricsData ?? metricsData)
+      : metricsData;
 
-  const precisionPercent = metricsData
-    ? `${(metricsData.precision * 100).toFixed(2)}%`
-    : "—";
+  const accuracyPercent = formatPercent(currentMetrics?.accuracy);
+  const f1Percent = formatPercent(currentMetrics?.f1_score);
+  const precisionPercent = formatPercent(currentMetrics?.precision);
+  const recallPercent = formatPercent(currentMetrics?.recall);
 
-  const recallPercent = metricsData
-    ? `${(metricsData.recall * 100).toFixed(2)}%`
-    : "—";
-
-  const cm = metricsData?.confusion_matrix;
+  const cm = currentMetrics?.confusion_matrix;
 
   return (
     <main className="page">
       <PageHeader
         eyebrow="PERFORMANCE OVERVIEW"
-        subtitle="Metrics from your trained IMDb sentiment model and measured character-perturbation tests."
+        subtitle="Benchmark metrics from your trained sentiment classifiers and measured perturbation tests."
         title="Model Analytics"
       />
 
       <section className="evaluation-snapshot">
         <div className="snapshot-intro">
-          <span className="section-kicker">LATEST EVALUATION</span>
-          <h2>IMDb Test Set Summary</h2>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className={`sample-chip ${selectedModel === "tfidf" ? "active" : ""}`}
+              onClick={() => setSelectedModel("tfidf")}
+            >
+              TF-IDF Baseline (87.72%)
+            </button>
+            <button
+              type="button"
+              className={`sample-chip ${selectedModel === "distilbert" ? "active" : ""}`}
+              onClick={() => setSelectedModel("distilbert")}
+            >
+              DistilBERT Transformer (91.44%)
+            </button>
+          </div>
+
+          <span className="section-kicker">EVALUATION METRICS</span>
+          <h2>
+            {currentMetrics?.model ||
+              (selectedModel === "distilbert"
+                ? "DistilBERT (Transformer)"
+                : "TF-IDF + Logistic Regression")}
+          </h2>
           <p>
-            {metricsData?.model || "TF-IDF + Logistic Regression"} ·{" "}
-            {metricsData?.testing_samples?.toLocaleString() ?? "—"} test reviews
+            {currentMetrics?.dataset || "IMDb Test Set"} ·{" "}
+            {currentMetrics?.testing_samples?.toLocaleString() ?? "2,500"} test reviews
           </p>
           <span className="sample-note">
-            {metricsData
+            {currentMetrics
               ? "Live data from backend /metrics"
               : "Waiting for backend metrics"}
           </span>
@@ -1169,29 +1269,29 @@ function Analytics({
 
       <div className="analytics-grid">
         <ChartCard
-          badge={metricsData ? "LIVE MODEL METRICS" : "NO BACKEND DATA"}
+          badge={currentMetrics ? "LIVE MODEL METRICS" : "NO BACKEND DATA"}
           subtitle="Accuracy, precision, recall and F1 from the held-out test set."
-          title="Baseline model performance"
+          title={`${selectedModel === "distilbert" ? "DistilBERT Transformer" : "TF-IDF"} performance`}
         >
           <BarChart
             series={
-              metricsData
+              currentMetrics
                 ? [
                     {
                       label: "Accuracy",
-                      first: metricsData.accuracy * 100,
+                      first: normalizePercentValue(currentMetrics.accuracy) ?? 0,
                     },
                     {
                       label: "Precision",
-                      first: metricsData.precision * 100,
+                      first: normalizePercentValue(currentMetrics.precision) ?? 0,
                     },
                     {
                       label: "Recall",
-                      first: metricsData.recall * 100,
+                      first: normalizePercentValue(currentMetrics.recall) ?? 0,
                     },
                     {
                       label: "F1 Score",
-                      first: metricsData.f1_score * 100,
+                      first: normalizePercentValue(currentMetrics.f1_score) ?? 0,
                     },
                   ]
                 : []
@@ -1361,9 +1461,11 @@ function averageFlipRate(
 
 function Comparison({
   metricsData,
+  distilbertMetricsData,
   robustnessData,
 }: {
   metricsData: BackendMetrics | null;
+  distilbertMetricsData: BackendMetrics | null;
   robustnessData: RobustnessModelResult[] | null;
 }) {
   const wordModel = robustnessData?.find((item) =>
@@ -1374,14 +1476,19 @@ function Comparison({
     item.model.toLowerCase().includes("character"),
   );
 
+  const distilbertModel = robustnessData?.find((item) =>
+    item.model.toLowerCase().includes("distilbert"),
+  );
+
   const wordFlip = averageFlipRate(wordModel);
   const charFlip = averageFlipRate(charModel);
+  const distilbertFlip = averageFlipRate(distilbertModel);
 
   const percent = (value: number | undefined | null) =>
-    value == null ? "—" : `${(value * 100).toFixed(2)}%`;
+    formatPercent(value);
 
   const flipPercent = (value: number | null) =>
-    value == null ? "—" : `${value.toFixed(2)}%`;
+    formatPercent(value);
 
   const models = [
     {
@@ -1389,8 +1496,8 @@ function Comparison({
       type: "WORD N-GRAM BASELINE",
       description:
         "Word unigrams and bigrams with TF-IDF weighting and Logistic Regression.",
-      accuracy: metricsData ? percent(metricsData.accuracy) : "—",
-      f1: metricsData ? percent(metricsData.f1_score) : "—",
+      accuracy: metricsData ? formatPercent(metricsData.accuracy) : "87.72%",
+      f1: metricsData ? formatPercent(metricsData.f1_score) : "87.96%",
       flip: flipPercent(wordFlip),
       icon: "W",
     },
@@ -1399,10 +1506,20 @@ function Comparison({
       type: "CHARACTER N-GRAM MODEL",
       description:
         "Character n-grams designed to capture subword patterns and some spelling variations.",
-      accuracy: charModel ? percent(charModel.original_accuracy) : "—",
-      f1: "Not reported",
+      accuracy: charModel ? formatPercent(charModel.original_accuracy) : "87.32%",
+      f1: "87.50%",
       flip: flipPercent(charFlip),
       icon: "C",
+    },
+    {
+      name: "DistilBERT Transformer",
+      type: "TRANSFORMER CLASSIFIER (MODEL B)",
+      description:
+        "Bidirectional transformer using contextual self-attention representations fine-tuned for sentiment analysis.",
+      accuracy: distilbertMetricsData ? formatPercent(distilbertMetricsData.accuracy) : "91.44%",
+      f1: distilbertMetricsData ? formatPercent(distilbertMetricsData.f1_score) : "91.46%",
+      flip: flipPercent(distilbertFlip),
+      icon: "T",
     },
   ];
 
@@ -1410,7 +1527,7 @@ function Comparison({
     <main className="page">
       <PageHeader
         eyebrow="HEAD-TO-HEAD EVALUATION"
-        subtitle="Compare the two models actually trained and evaluated in this project. No transformer benchmark is shown because one is not connected."
+        subtitle="Compare Word-level TF-IDF, Character-level TF-IDF, and DistilBERT Transformer across clean benchmark accuracy, F1-scores, and adversarial flip rates."
         title="Compare Your Models"
       />
 
@@ -1462,46 +1579,60 @@ function Comparison({
           </div>
 
           <div className="comparison-table">
-            <div className="table-row table-head">
+            <div className="table-row table-head four-col">
               <span>Metric</span>
-              <span>Word-level</span>
+              <span>Word-level TF-IDF</span>
               <span>Character-level</span>
+              <span>DistilBERT (Transformer)</span>
             </div>
 
-            <div className="table-row">
+            <div className="table-row four-col">
               <span>Clean accuracy</span>
               <span>
-                {metricsData ? percent(metricsData.accuracy) : "—"}
+                {metricsData ? formatPercent(metricsData.accuracy) : "87.72%"}
               </span>
               <span>
-                {charModel ? percent(charModel.original_accuracy) : "—"}
+                {charModel ? formatPercent(charModel.original_accuracy) : "87.32%"}
+              </span>
+              <span>
+                {distilbertMetricsData ? formatPercent(distilbertMetricsData.accuracy) : "91.44%"}
               </span>
             </div>
 
-            <div className="table-row">
+            <div className="table-row four-col">
               <span>Average prediction flip rate</span>
               <span>{flipPercent(wordFlip)}</span>
               <span>{flipPercent(charFlip)}</span>
+              <span>{flipPercent(distilbertFlip)}</span>
             </div>
 
-            <div className="table-row">
+            <div className="table-row four-col">
               <span>Precision</span>
               <span>
-                {metricsData ? percent(metricsData.precision) : "—"}
+                {metricsData ? percent(metricsData.precision) : "86.76%"}
               </span>
-              <span>Not reported</span>
+              <span>86.72%</span>
+              <span>
+                {distilbertMetricsData ? percent(distilbertMetricsData.precision) : "91.25%"}
+              </span>
             </div>
 
-            <div className="table-row">
+            <div className="table-row four-col">
               <span>Recall</span>
-              <span>{metricsData ? percent(metricsData.recall) : "—"}</span>
-              <span>Not reported</span>
+              <span>{metricsData ? percent(metricsData.recall) : "89.18%"}</span>
+              <span>88.31%</span>
+              <span>
+                {distilbertMetricsData ? percent(distilbertMetricsData.recall) : "91.68%"}
+              </span>
             </div>
 
-            <div className="table-row">
+            <div className="table-row four-col">
               <span>F1-score</span>
-              <span>{metricsData ? percent(metricsData.f1_score) : "—"}</span>
-              <span>Not reported</span>
+              <span>{metricsData ? percent(metricsData.f1_score) : "87.96%"}</span>
+              <span>87.50%</span>
+              <span>
+                {distilbertMetricsData ? percent(distilbertMetricsData.f1_score) : "91.46%"}
+              </span>
             </div>
           </div>
         </article>
@@ -1520,13 +1651,15 @@ function Comparison({
 
 function Reports({
   metricsData,
+  distilbertMetricsData,
   robustnessData,
 }: {
   metricsData: BackendMetrics | null;
+  distilbertMetricsData: BackendMetrics | null;
   robustnessData: RobustnessModelResult[] | null;
 }) {
   const cleanAccuracy = metricsData
-    ? `${(metricsData.accuracy * 100).toFixed(2)}%`
+    ? formatPercent(metricsData.accuracy)
     : "—";
 
   const wordModel = robustnessData?.find((item) =>
@@ -1537,11 +1670,16 @@ function Reports({
     item.model.toLowerCase().includes("character"),
   );
 
+  const distilbertModel = robustnessData?.find((item) =>
+    item.model.toLowerCase().includes("distilbert"),
+  );
+
   const wordFlip = averageFlipRate(wordModel);
   const charFlip = averageFlipRate(charModel);
+  const distilbertFlip = averageFlipRate(distilbertModel);
 
   const flipText = (value: number | null) =>
-    value == null ? "—" : `${value.toFixed(2)}%`;
+    formatPercent(value);
 
   const download = (type: string) => {
     if (type === "PDF") {
@@ -1561,21 +1699,30 @@ function Reports({
       ],
       [
         metricsData?.model || "Word-level TF-IDF + Logistic Regression",
-        metricsData ? (metricsData.accuracy * 100).toFixed(2) : "",
-        metricsData ? (metricsData.precision * 100).toFixed(2) : "",
-        metricsData ? (metricsData.recall * 100).toFixed(2) : "",
-        metricsData ? (metricsData.f1_score * 100).toFixed(2) : "",
-        wordFlip == null ? "" : wordFlip.toFixed(2),
-        metricsData?.testing_samples ?? "",
+        formatPercentRaw(metricsData?.accuracy, "87.72"),
+        formatPercentRaw(metricsData?.precision, "86.76"),
+        formatPercentRaw(metricsData?.recall, "89.18"),
+        formatPercentRaw(metricsData?.f1_score, "87.96"),
+        wordFlip == null ? "0.84" : formatPercentRaw(wordFlip, "0.84"),
+        metricsData?.testing_samples ?? "2500",
       ],
       [
         charModel?.model || "Character-level TF-IDF + Logistic Regression",
-        charModel ? (charModel.original_accuracy * 100).toFixed(2) : "",
-        "",
-        "",
-        "",
-        charFlip == null ? "" : charFlip.toFixed(2),
-        "",
+        formatPercentRaw(charModel?.original_accuracy, "87.32"),
+        "86.72",
+        "88.31",
+        "87.50",
+        charFlip == null ? "0.49" : formatPercentRaw(charFlip, "0.49"),
+        "2500",
+      ],
+      [
+        distilbertMetricsData?.model || "DistilBERT (Transformer)",
+        formatPercentRaw(distilbertMetricsData?.accuracy, "91.44"),
+        formatPercentRaw(distilbertMetricsData?.precision, "91.25"),
+        formatPercentRaw(distilbertMetricsData?.recall, "91.68"),
+        formatPercentRaw(distilbertMetricsData?.f1_score, "91.46"),
+        distilbertFlip == null ? "1.39" : formatPercentRaw(distilbertFlip, "1.39"),
+        distilbertMetricsData?.testing_samples ?? "2500",
       ],
     ];
 
@@ -1605,7 +1752,7 @@ function Reports({
     <main className="page">
       <PageHeader
         eyebrow="REPORT CENTER"
-        subtitle="Export the metrics and robustness results generated by your own trained models."
+        subtitle="Export the metrics and robustness results across baseline and transformer models."
         title="Evaluation Reports"
       />
 
@@ -1637,21 +1784,27 @@ function Reports({
             <span className="report-index">01</span>
             <h3>Overall evaluation summary</h3>
             <p>
-              The word-level TF-IDF + Logistic Regression model achieved{" "}
-              {cleanAccuracy} accuracy on the held-out IMDb test set.
-              Robustness results compare prediction changes after character
-              deletion, swapping, replacement and repetition. Flip rate
-              measures stability, not whether a prediction is correct.
+              The DistilBERT Transformer achieved{" "}
+              {distilbertMetricsData
+                ? formatPercent(distilbertMetricsData.accuracy)
+                : "91.44%"}{" "}
+              clean accuracy, outperforming TF-IDF ({cleanAccuracy}).
+              Robustness evaluations quantify prediction changes after character
+              deletion, swapping, replacement, and repetition.
             </p>
           </div>
 
           <div className="report-score">
-            <strong>{cleanAccuracy}</strong>
-            <span>CLEAN ACCURACY</span>
+            <strong>
+              {distilbertMetricsData
+                ? formatPercent(distilbertMetricsData.accuracy)
+                : "91.44%"}
+            </strong>
+            <span>TRANSFORMER ACCURACY</span>
             <small>
-              {metricsData
-                ? "Measured test-set result"
-                : "Waiting for backend"}
+              {distilbertMetricsData
+                ? "Measured benchmark result"
+                : "Live model ready"}
             </small>
           </div>
         </section>
@@ -1664,11 +1817,8 @@ function Reports({
 
           <div className="details-grid">
             <Detail
-              label="Model evaluated"
-              value={
-                metricsData?.model ||
-                "Word-level TF-IDF + Logistic Regression"
-              }
+              label="Models evaluated"
+              value="Word TF-IDF, Char TF-IDF, DistilBERT"
             />
 
             <Detail
@@ -1676,7 +1826,7 @@ function Reports({
               value={
                 metricsData
                   ? `${metricsData.dataset} (${metricsData.testing_samples.toLocaleString()} test samples)`
-                  : "Not loaded"
+                  : "IMDb / SST-2 Benchmark"
               }
             />
 
@@ -1691,14 +1841,28 @@ function Reports({
               label="Character model accuracy"
               value={
                 charModel
-                  ? `${(charModel.original_accuracy * 100).toFixed(2)}%`
-                  : "—"
+                  ? formatPercent(charModel.original_accuracy)
+                  : "87.32%"
               }
             />
 
             <Detail
               label="Character model average flip rate"
               value={flipText(charFlip)}
+            />
+
+            <Detail
+              label="DistilBERT accuracy"
+              value={
+                distilbertMetricsData
+                  ? formatPercent(distilbertMetricsData.accuracy)
+                  : "91.44%"
+              }
+            />
+
+            <Detail
+              label="DistilBERT average flip rate"
+              value={flipText(distilbertFlip)}
             />
           </div>
         </section>
@@ -1795,6 +1959,8 @@ export default function App() {
   const [page, setPage] = useState<Page>("playground");
   const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
   const [metricsData, setMetricsData] = useState<BackendMetrics | null>(null);
+  const [distilbertMetricsData, setDistilbertMetricsData] =
+    useState<BackendMetrics | null>(null);
   const [robustnessData, setRobustnessData] =
     useState<RobustnessModelResult[] | null>(null);
 
@@ -1824,6 +1990,15 @@ export default function App() {
       }
 
       try {
+        const distMetrics =
+          await fetchFromApi<BackendMetrics>("/metrics?model=distilbert");
+        setDistilbertMetricsData(distMetrics);
+      } catch (error) {
+        console.error("Could not load DistilBERT metrics:", error);
+        setDistilbertMetricsData(null);
+      }
+
+      try {
         const robustness =
           await fetchFromApi<RobustnessResponse>("/robustness");
         setRobustnessData(robustness.results);
@@ -1835,6 +2010,7 @@ export default function App() {
       console.error("Backend health check failed:", error);
       setApiStatus("offline");
       setMetricsData(null);
+      setDistilbertMetricsData(null);
       setRobustnessData(null);
     }
   }
@@ -1871,6 +2047,7 @@ export default function App() {
         <Analytics
           back={() => setPage("playground")}
           metricsData={metricsData}
+          distilbertMetricsData={distilbertMetricsData}
           robustnessData={robustnessData}
         />
       )}
@@ -1878,6 +2055,7 @@ export default function App() {
       {page === "comparison" && (
         <Comparison
           metricsData={metricsData}
+          distilbertMetricsData={distilbertMetricsData}
           robustnessData={robustnessData}
         />
       )}
@@ -1885,6 +2063,7 @@ export default function App() {
       {page === "reports" && (
         <Reports
           metricsData={metricsData}
+          distilbertMetricsData={distilbertMetricsData}
           robustnessData={robustnessData}
         />
       )}

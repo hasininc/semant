@@ -451,6 +451,14 @@ textarea::placeholder {
   transform: translateY(-1px);
 }
 
+.sample-chip.active {
+  background: linear-gradient(135deg, rgba(147, 112, 219, 0.22), rgba(184, 153, 255, 0.28));
+  border-color: rgba(147, 112, 219, 0.6);
+  color: #4a2f85;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(147, 112, 219, 0.16);
+}
+
 .chip-dot {
   width: 6px;
   height: 6px;
@@ -1089,7 +1097,7 @@ textarea::placeholder {
 
 .model-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
 }
 
@@ -1224,6 +1232,10 @@ textarea::placeholder {
 
 .table-row span:not(:first-child) {
   text-align: right;
+}
+
+.table-row.four-col {
+  grid-template-columns: 1.4fr 1fr 1fr 1.15fr;
 }
 
 .table-row.table-head {
@@ -2074,8 +2086,8 @@ textarea {
 }
 
 .model-grid {
-  grid-template-columns: 0.94fr 1.06fr;
-  align-items: start;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
 }
 
 .model-card {

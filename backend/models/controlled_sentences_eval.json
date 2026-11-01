@@ -1,0 +1,322 @@
+[
+  {
+    "text": "The movie was amazing.",
+    "tokens": [
+      "the",
+      "movie",
+      "was",
+      "amazing",
+      "."
+    ],
+    "raw_logits": [
+      -4.3524,
+      4.7003
+    ],
+    "logit_margin": 9.0527,
+    "word_tfidf": {
+      "prediction": "Positive",
+      "confidence": 68.12,
+      "probabilities": {
+        "negative": 31.88,
+        "positive": 68.12
+      }
+    },
+    "char_tfidf": {
+      "prediction": "Positive",
+      "confidence": 77.68,
+      "probabilities": {
+        "negative": 22.32,
+        "positive": 77.68
+      }
+    },
+    "distilbert": {
+      "prediction": "Positive",
+      "raw_confidence": 99.99,
+      "raw_probabilities": {
+        "negative": 0.01,
+        "positive": 99.99
+      },
+      "calibrated_confidence": 99.76,
+      "calibrated_probabilities": {
+        "negative": 0.24,
+        "positive": 99.76
+      },
+      "temperature": 1.5
+    }
+  },
+  {
+    "text": "The movie was amazig.",
+    "tokens": [
+      "the",
+      "movie",
+      "was",
+      "ama",
+      "##zi",
+      "##g",
+      "."
+    ],
+    "raw_logits": [
+      2.3248,
+      -2.0168
+    ],
+    "logit_margin": 4.3416,
+    "word_tfidf": {
+      "prediction": "Negative",
+      "confidence": 83.34,
+      "probabilities": {
+        "negative": 83.34,
+        "positive": 16.66
+      }
+    },
+    "char_tfidf": {
+      "prediction": "Positive",
+      "confidence": 64.48,
+      "probabilities": {
+        "negative": 35.52,
+        "positive": 64.48
+      }
+    },
+    "distilbert": {
+      "prediction": "Negative",
+      "raw_confidence": 98.72,
+      "raw_probabilities": {
+        "negative": 98.72,
+        "positive": 1.28
+      },
+      "calibrated_confidence": 94.76,
+      "calibrated_probabilities": {
+        "negative": 94.76,
+        "positive": 5.24
+      },
+      "temperature": 1.5
+    }
+  },
+  {
+    "text": "The movie was amazng.",
+    "tokens": [
+      "the",
+      "movie",
+      "was",
+      "ama",
+      "##z",
+      "##ng",
+      "."
+    ],
+    "raw_logits": [
+      -1.5178,
+      1.6398
+    ],
+    "logit_margin": 3.1576,
+    "word_tfidf": {
+      "prediction": "Negative",
+      "confidence": 83.34,
+      "probabilities": {
+        "negative": 83.34,
+        "positive": 16.66
+      }
+    },
+    "char_tfidf": {
+      "prediction": "Negative",
+      "confidence": 50.36,
+      "probabilities": {
+        "negative": 50.36,
+        "positive": 49.64
+      }
+    },
+    "distilbert": {
+      "prediction": "Positive",
+      "raw_confidence": 95.92,
+      "raw_probabilities": {
+        "negative": 4.08,
+        "positive": 95.92
+      },
+      "calibrated_confidence": 89.14,
+      "calibrated_probabilities": {
+        "negative": 10.86,
+        "positive": 89.14
+      },
+      "temperature": 1.5
+    }
+  },
+  {
+    "text": "The movie was excellent.",
+    "tokens": [
+      "the",
+      "movie",
+      "was",
+      "excellent",
+      "."
+    ],
+    "raw_logits": [
+      -4.2495,
+      4.6303
+    ],
+    "logit_margin": 8.8798,
+    "word_tfidf": {
+      "prediction": "Positive",
+      "confidence": 73.55,
+      "probabilities": {
+        "negative": 26.45,
+        "positive": 73.55
+      }
+    },
+    "char_tfidf": {
+      "prediction": "Positive",
+      "confidence": 86.88,
+      "probabilities": {
+        "negative": 13.12,
+        "positive": 86.88
+      }
+    },
+    "distilbert": {
+      "prediction": "Positive",
+      "raw_confidence": 99.99,
+      "raw_probabilities": {
+        "negative": 0.01,
+        "positive": 99.99
+      },
+      "calibrated_confidence": 99.73,
+      "calibrated_probabilities": {
+        "negative": 0.27,
+        "positive": 99.73
+      },
+      "temperature": 1.5
+    }
+  },
+  {
+    "text": "The movie was terrible.",
+    "tokens": [
+      "the",
+      "movie",
+      "was",
+      "terrible",
+      "."
+    ],
+    "raw_logits": [
+      4.5825,
+      -3.7612
+    ],
+    "logit_margin": 8.3437,
+    "word_tfidf": {
+      "prediction": "Negative",
+      "confidence": 93.59,
+      "probabilities": {
+        "negative": 93.59,
+        "positive": 6.41
+      }
+    },
+    "char_tfidf": {
+      "prediction": "Negative",
+      "confidence": 98.52,
+      "probabilities": {
+        "negative": 98.52,
+        "positive": 1.48
+      }
+    },
+    "distilbert": {
+      "prediction": "Negative",
+      "raw_confidence": 99.98,
+      "raw_probabilities": {
+        "negative": 99.98,
+        "positive": 0.02
+      },
+      "calibrated_confidence": 99.62,
+      "calibrated_probabilities": {
+        "negative": 99.62,
+        "positive": 0.38
+      },
+      "temperature": 1.5
+    }
+  },
+  {
+    "text": "The movie was not good.",
+    "tokens": [
+      "the",
+      "movie",
+      "was",
+      "not",
+      "good",
+      "."
+    ],
+    "raw_logits": [
+      4.6758,
+      -3.7156
+    ],
+    "logit_margin": 8.3914,
+    "word_tfidf": {
+      "prediction": "Negative",
+      "confidence": 82.49,
+      "probabilities": {
+        "negative": 82.49,
+        "positive": 17.51
+      }
+    },
+    "char_tfidf": {
+      "prediction": "Negative",
+      "confidence": 82.02,
+      "probabilities": {
+        "negative": 82.02,
+        "positive": 17.98
+      }
+    },
+    "distilbert": {
+      "prediction": "Negative",
+      "raw_confidence": 99.98,
+      "raw_probabilities": {
+        "negative": 99.98,
+        "positive": 0.02
+      },
+      "calibrated_confidence": 99.63,
+      "calibrated_probabilities": {
+        "negative": 99.63,
+        "positive": 0.37
+      },
+      "temperature": 1.5
+    }
+  },
+  {
+    "text": "The movie was okay.",
+    "tokens": [
+      "the",
+      "movie",
+      "was",
+      "okay",
+      "."
+    ],
+    "raw_logits": [
+      -4.0739,
+      4.4498
+    ],
+    "logit_margin": 8.5237,
+    "word_tfidf": {
+      "prediction": "Negative",
+      "confidence": 75.76,
+      "probabilities": {
+        "negative": 75.76,
+        "positive": 24.24
+      }
+    },
+    "char_tfidf": {
+      "prediction": "Negative",
+      "confidence": 77.4,
+      "probabilities": {
+        "negative": 77.4,
+        "positive": 22.6
+      }
+    },
+    "distilbert": {
+      "prediction": "Positive",
+      "raw_confidence": 99.98,
+      "raw_probabilities": {
+        "negative": 0.02,
+        "positive": 99.98
+      },
+      "calibrated_confidence": 99.66,
+      "calibrated_probabilities": {
+        "negative": 0.34,
+        "positive": 99.66
+      },
+      "temperature": 1.5
+    }
+  }
+]

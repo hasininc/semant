@@ -50,5 +50,31 @@
                 "prediction_flip_rate": 0.32
             }
         }
+    },
+    {
+        "model": "DistilBERT (Transformer)",
+        "original_accuracy": 91.44,
+        "perturbations": {
+            "character_deletion": {
+                "accuracy": 89.92,
+                "accuracy_drop": 1.52,
+                "prediction_flip_rate": 1.48
+            },
+            "character_swap": {
+                "accuracy": 89.48,
+                "accuracy_drop": 1.96,
+                "prediction_flip_rate": 1.84
+            },
+            "character_replacement": {
+                "accuracy": 90.12,
+                "accuracy_drop": 1.32,
+                "prediction_flip_rate": 1.28
+            },
+            "character_repetition": {
+                "accuracy": 90.64,
+                "accuracy_drop": 0.80,
+                "prediction_flip_rate": 0.96
+            }
+        }
     }
 ]
